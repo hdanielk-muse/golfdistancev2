@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d1117">
+<title>골프 비거리 기록 v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:#0d1117;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;min-height:100vh;padding:12px;max-width:480px;margin:0 auto}
+h1{font-size:20px;text-align:center;margin:8px 0 12px}
+.settings{background:#161b22;border:1px solid #2a2f3a;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;font-size:14px}
+.settings input[type=checkbox]{width:22px;height:22px}
+#hole-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:12px}
+#hole-grid button{padding:14px 0;font-size:17px;font-weight:700;border:1px solid #2a2f3a;border-radius:10px;background:#161b22;color:#fff;cursor:pointer}
+#hole-grid button.active{background:#1f6feb;border-color:#1f6feb}
+#hole-grid button.done{background:#0f2a1a;border-color:#2a6b2a;color:#7fd67f}
+#tap-btn{width:100%;height:220px;font-size:48px;font-weight:900;border:none;border-radius:20px;background:linear-gradient(135deg,#1f6feb,#388bfd);color:#fff;cursor:pointer;margin-bottom:12px}
+#tap-btn:active{transform:scale(.97)}
+#tap-btn:disabled{opacity:.6}
+.shot-list{background:#161b22;border:1px solid #2a2f3a;border-radius:10px;padding:10px;margin-bottom:12px}
+.shot-list .shot{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #2a2f3a;font-size:15px}
+.shot-list .shot:last-child{border:none}
+.shot-list select{flex:1;padding:10px;font-size:15px;border-radius:8px;border:1px solid #2a2f3a;background:#0d1117;color:#fff}
+#current-hole-info{text-align:center;font-size:15px;color:#888;margin-bottom:8px}
+.nav{display:flex;gap:8px;margin-bottom:12px}
+.nav button{flex:1;padding:12px;font-size:14px;border:1px solid #2a2f3a;border-radius:10px;background:#161b22;color:#fff;cursor:pointer}
+#undo-btn{background:#3a1a1a;border-color:#6b2222}
+#records{background:#161b22;border:1px solid #2a2f3a;border-radius:10px;padding:14px;margin-top:12px;display:none}
+#records h2{font-size:17px;margin-bottom:10px}
+#records table{width:100%;border-collapse:collapse;font-size:14px}
+#records th,#records td{padding:6px;border-bottom:1px solid #2a2f3a;text-align:left}
+#records th{color:#888}
+.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:10}
+.modal .box{background:#161b22;border:1px solid #2a2f3a;border-radius:14px;padding:24px;text-align:center;max-width:320px}
+.modal .box p{font-size:17px;margin-bottom:16px}
+.modal .box button{padding:12px 28px;font-size:16px;font-weight:700;border:none;border-radius:10px;margin:0 6px;cursor:pointer}
+.modal .ok{background:#1f6feb;color:#fff}
+.modal .cancel{background:#2a2f3a;color:#fff}
+#err,#ok{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:10px;font-size:15px;display:none;z-index:20}
+#err{background:#6b2222}#ok{background:#1a6b2a}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<h1>⛳ 골프 비거리 기록</h1>
+<div class="settings">
+<input type="checkbox" id="two-shot-only" onchange="saveSettings()">
+<label for="two-shot-only">홀당 2샷만 기록 (티샷+세컨샷)</label>
+</div>
+<div id="hole-grid"></div>
+<div id="current-hole-info"></div>
+
+<button id="tap-btn" onclick="quickTap()">TAP</button>
+<div class="shot-list" id="quick-shots"></div>
+<button style="width:100%;padding:14px;font-size:16px;font-weight:700;border:none;border-radius:10px;background:#1f6feb;color:#fff;cursor:pointer;margin-bottom:12px" onclick="showClubAssign()">클럽 지정하기</button>
+
+<div class="nav">
+<button id="undo-btn" onclick="undo()">↩ 잘못 눌렀어요</button>
+<button onclick="toggleRecords()">기록 보기</button>
+<button onclick="clearAll()">🗑 전체 삭제</button>
+</div>
+<div class="nav">
+<button onclick="enableTestMode()" style="font-size:13px;color:#888">🧪 GPS 테스트 모드</button>
+</div>
+<div id="records"></div>
+
+<div class="modal" id="modal"><div class="box"><p id="modal-msg"></p><button class="ok" onclick="modalOk()">OK</button><button class="cancel" onclick="modalCancel()">취소</button></div></div>
+<div id="err"></div><div id="ok"></div>
+
+<script>
+const LS_KEY="shots-v2";
+const CLUBS=["드라이버","3번우드","5번우드","4번유틸","4번아이언","5번아이언","6번아이언","7번아이언","8번아이언","9번아이언","P웨지","G웨지","S웨지","퍼터"];
+let hole=1;
+let shots=[]; // {hole,num,club,lat,lng,yards,time}
+let undoStack=[];
+let twoShotOnly=false;
+let testMode=false;
+
+function load(){try{const s=localStorage.getItem(LS_KEY);if(s)shots=JSON.parse(s);}catch(e){shots=[];}
+try{twoShotOnly=localStorage.getItem("shots-v2-twoshot")==="1";document.getElementById("two-shot-only").checked=twoShotOnly;}catch(e){}}
+function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(shots));}catch(e){}}
+function saveSettings(){twoShotOnly=document.getElementById("two-shot-only").checked;try{localStorage.setItem("shots-v2-twoshot",twoShotOnly?"1":"0");}catch(e){}}
+function showErr(m){const e=document.getElementById("err");e.textContent=m;e.style.display="block";clearTimeout(showErr.t);showErr.t=setTimeout(()=>e.style.display="none",2500);}
+function showOk(m){const e=document.getElementById("ok");e.textContent=m;e.style.display="block";clearTimeout(showOk.t);showOk.t=setTimeout(()=>e.style.display="none",2500);}
+function pushUndo(){undoStack.push(JSON.stringify(shots));if(undoStack.length>20)undoStack.shift();}
+function undo(){if(!undoStack.length){showErr("되돌릴 게 없어");return;}shots=JSON.parse(undoStack.pop());save();render();showOk("되돌렸어");}
+function clearAll(){if(!confirm("전체 기록을 지울까?"))return;pushUndo();shots=[];save();render();}
+
+function holeShots(h){return shots.filter(s=>s.hole===h).sort((a,b)=>a.num-b.num);}
+function maxShots(){return twoShotOnly?2:99;}
+
+function render(){
+ // 홀 그리드
+ const hg=document.getElementById("hole-grid");hg.innerHTML="";
+ for(let i=1;i<=18;i++){const b=document.createElement("button");b.textContent=i;
+  if(i===hole)b.classList.add("active");else if(holeShots(i).length)b.classList.add("done");
+  b.onclick=()=>{hole=i;render();};hg.appendChild(b);}
+ // 현재 홀 정보
+ const hs=holeShots(hole);
+ document.getElementById("current-hole-info").textContent=hole+"번 홀 · "+hs.length+"샷 기록됨"+(twoShotOnly?" (2샷 모드)":"");
+ renderQuick();
+}
+function renderQuick(){
+ const el=document.getElementById("quick-shots");const hs=holeShots(hole);
+ if(!hs.length){el.innerHTML='<div style="color:#666;font-size:14px">아직 기록 없음 — TAP을 눌러줘</div>';return;}
+ el.innerHTML=hs.map(s=>`<div class="shot"><span>샷${s.num}</span><span style="color:#888">${s.club||"미지정"}</span>${s.yards!=null?`<span style="color:#7fd67f">${s.yards}y</span>`:""}</div>`).join("");
+}
+
+// 거리 계산 (야드)
+function distYards(a,b){
+ const R=6371000,toRad=d=>d*Math.PI/180;
+ const dLat=toRad(b.lat-a.lat),dLng=toRad(b.lng-a.lng);
+ const h=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+ return Math.round(2*R*Math.asin(Math.sqrt(h))*1.09361);
+}
+function getPos(){
+ return new Promise((res,rej)=>{
+  if(testMode){
+   // 테스트 모드: 현재 홀 샷 수에 따라 약간씩 이동한 가짜 좌표
+   const hs=holeShots(hole);
+   const base={lat:43.8142,lng:-79.4230};
+   const off=hs.length*0.002; // 약 200야드씩 이동
+   res({lat:base.lat+off*0.7,lng:base.lng+off});
+   return;
+  }
+  if(!navigator.geolocation){rej("GPS 미지원");return;}
+  navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),()=>rej("GPS 실패"),{enableHighAccuracy:true,timeout:8000});
+ });
+}
+function enableTestMode(){testMode=true;showOk("테스트 모드 켜짐 (가짜 GPS)");}
+function recalcHole(h){
+ const hs=holeShots(h);
+ // 샷N의 비거리 = 샷N 위치에서 샷N+1 위치까지 (다음 샷을 쳐야 알 수 있음)
+ for(let i=0;i<hs.length-1;i++){hs[i].yards=distYards(hs[i],hs[i+1]);}
+ if(hs.length)hs[hs.length-1].yards=null;
+}
+
+// 퀵 모드
+async function quickTap(){
+ const hs=holeShots(hole);
+ if(hs.length>=maxShots()){showErr("이 홀 기록 완료");return;}
+ const btn=document.getElementById("tap-btn");
+ btn.textContent="GPS...";btn.disabled=true;
+ let pos;try{pos=await getPos();}catch(e){btn.textContent="TAP";btn.disabled=false;showErr(e+" — 위치 권한을 허용해줘");return;}
+ btn.textContent="TAP";btn.disabled=false;
+ pushUndo();
+ shots.push({hole,num:hs.length+1,club:null,lat:pos.lat,lng:pos.lng,yards:null,time:Date.now()});
+ recalcHole(hole);save();
+ if(twoShotOnly&&hs.length+1>=2){if(hole<18)hole++;}
+ render();showOk("샷 저장됨");
+}
+function showClubAssign(){
+ const hs=holeShots(hole).filter(s=>!s.club);
+ if(!hs.length){showOk("지정할 샷이 없어");return;}
+ const el=document.getElementById("quick-shots");
+ el.innerHTML=hs.map(s=>`<div class="shot"><span>샷${s.num}</span><select data-num="${s.num}">${CLUBS.map(c=>`<option>${c}</option>`).join("")}</select></div>`).join("")
+  +`<button style="width:100%;margin-top:8px;padding:14px;font-size:16px;font-weight:700;border:none;border-radius:10px;background:#1f6feb;color:#fff;cursor:pointer" onclick="assignClubs()">저장</button>`;
+}
+function assignClubs(){
+ pushUndo();
+ document.querySelectorAll("#quick-shots select").forEach(sel=>{
+  const num=parseInt(sel.dataset.num);
+  const s=shots.find(x=>x.hole===hole&&x.num===num);
+  if(s)s.club=sel.value;
+ });
+ save();render();showOk("클럽 지정 완료");
+}
+
+// 모달
+let modalCb=null;
+function showModal(msg,cb){document.getElementById("modal-msg").textContent=msg;document.getElementById("modal").style.display="flex";modalCb=cb;}
+function modalOk(){document.getElementById("modal").style.display="none";if(modalCb)modalCb();modalCb=null;}
+function modalCancel(){document.getElementById("modal").style.display="none";modalCb=null;render();}
+
+// 기록 보기
+function toggleRecords(){
+ const el=document.getElementById("records");
+ if(el.style.display==="block"){el.style.display="none";return;}
+ if(!shots.length){el.innerHTML="<h2>기록 없음</h2>";el.style.display="block";return;}
+ const byClub={};
+ shots.forEach(s=>{if(s.yards!=null&&s.club&&s.club!=="퍼터"){if(!byClub[s.club])byClub[s.club]=[];byClub[s.club].push(s.yards);}});
+ let html="<h2>클럽별 평균 비거리</h2><table><tr><th>클럽</th><th>평균</th><th>횟수</th></tr>";
+ Object.keys(byClub).sort().forEach(c=>{const a=byClub[c];const avg=Math.round(a.reduce((x,y)=>x+y,0)/a.length);
+  html+=`<tr><td>${c}</td><td>${avg}y</td><td>${a.length}</td></tr>`;});
+ html+="</table><h2 style='margin-top:14px'>전체 기록 (${shots.length}샷)</h2><table><tr><th>홀</th><th>샷</th><th>클럽</th><th>거리</th></tr>";
+ [...shots].sort((a,b)=>a.hole-b.hole||a.num-b.num).forEach(s=>{
+  html+=`<tr><td>${s.hole}</td><td>${s.num}</td><td>${s.club||"-"}</td><td>${s.yards!=null?s.yards+"y":"-"}</td></tr>`;});
+ html+="</table>";
+ el.innerHTML=html;el.style.display="block";
+}
+
+load();render();
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}
+</script>
+</body>
+</html>
