@@ -184,7 +184,7 @@ function toggleRecords(){
  let html="<h2>클럽별 평균 비거리</h2><table><tr><th>클럽</th><th>평균</th><th>횟수</th></tr>";
  Object.keys(byClub).sort().forEach(c=>{const a=byClub[c];const avg=Math.round(a.reduce((x,y)=>x+y,0)/a.length);
   html+=`<tr><td>${c}</td><td>${avg}y</td><td>${a.length}</td></tr>`;});
- html+="</table><h2 style='margin-top:14px'>전체 기록 (${shots.length}샷)</h2><table><tr><th>홀</th><th>샷</th><th>클럽</th><th>거리</th></tr>";
+ html+=`</table><h2 style='margin-top:14px'>전체 기록 (${shots.length}샷)</h2><table><tr><th>홀</th><th>샷</th><th>클럽</th><th>거리</th></tr>`;
  [...shots].sort((a,b)=>a.hole-b.hole||a.num-b.num).forEach(s=>{
   html+=`<tr><td>${s.hole}</td><td>${s.num}</td><td>${s.club||"-"}</td><td>${s.yards!=null?s.yards+"y":"-"}</td></tr>`;});
  html+="</table>";
